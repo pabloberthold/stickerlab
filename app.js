@@ -20,9 +20,14 @@
   const state = {
     margin: 5,
     gap: 3,
-    assets: new Map(), // id -> {id, name, svgText, thumbSvgText}
+    assets: new Map(), // id -> {id, name, svgText}
     assetCounter: 0,
+    folderHandle: null, // FileSystemDirectoryHandle de /modelos, si está conectada
   };
+
+  const MODELS_MANIFEST_URL = 'modelos/manifest.json';
+  const MODELS_FOLDER_PATH = 'modelos/';
+  const sourceToAssetId = new Map(); // evita duplicar en la galería un mismo modelo clicado varias veces
 
   let canvas;          // instancia fabric.Canvas
   let marginGuide;      // rect guía de margen
@@ -40,7 +45,10 @@
     setupToolButtons();
     setupMarginGapInputs();
     setupKeyboard();
+    setupModelsGallery();
+    setupClearButton();
     updateMarginGuide();
+    tryRestoreFolderHandle();
   }
 
   // =========================================================================
@@ -159,12 +167,20 @@
 
     files.forEach(file => {
       const reader = new FileReader();
-      reader.onload = ev => {
+      reader.onload = async ev => {
         const svgText = sanitizeSvgText(ev.target.result);
         if (!svgText) { showToast(`No se pudo leer "${file.name}"`); return; }
         const id = 'asset_' + (++state.assetCounter);
         state.assets.set(id, { id, name: file.name.replace(/\.svg$/i, ''), svgText });
         renderGalleryItem(state.assets.get(id));
+
+        const saveToggle = document.getElementById('saveToModelsToggle');
+        if (state.folderHandle && saveToggle && saveToggle.checked) {
+          await writeSvgToFolder(file.name, svgText);
+          if (!document.getElementById('modelsModalBackdrop').classList.contains('hidden')) {
+            loadFolderModels(state.folderHandle);
+          }
+        }
       };
       reader.readAsText(file);
     });
@@ -532,6 +548,236 @@
     </svg>`;
 
     return { wrapperHtml, x: bboxLeftMm, y: bboxTopMm, w: bboxWmm, h: bboxHmm };
+  }
+
+  // =========================================================================
+  // LIMPIAR PLANTILLA
+  // =========================================================================
+  function setupClearButton() {
+    document.getElementById('clearBtn').addEventListener('click', clearSheet);
+  }
+
+  function clearSheet() {
+    const objs = canvas.getObjects().filter(o => !(o.data && o.data.isGuide));
+    if (!objs.length) { showToast('La hoja ya está vacía'); return; }
+    const ok = window.confirm('¿Vaciar la hoja A4? Se eliminarán todos los elementos colocados (la galería no se ve afectada).');
+    if (!ok) return;
+    objs.forEach(o => canvas.remove(o));
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+    onSelectionCleared();
+    showToast('Hoja vaciada');
+  }
+
+  // =========================================================================
+  // GALERÍA DE MODELOS (/modelos): manifest estático + carpeta local opcional
+  // =========================================================================
+  function setupModelsGallery() {
+    const openBtn = document.getElementById('modelsGalleryBtn');
+    const backdrop = document.getElementById('modelsModalBackdrop');
+    const closeBtn = document.getElementById('modelsModalClose');
+    const connectBtn = document.getElementById('connectFolderBtn');
+
+    openBtn.addEventListener('click', () => {
+      backdrop.classList.remove('hidden');
+      loadStaticModels();
+      if (state.folderHandle) loadFolderModels(state.folderHandle);
+    });
+    closeBtn.addEventListener('click', () => backdrop.classList.add('hidden'));
+    backdrop.addEventListener('click', e => { if (e.target === backdrop) backdrop.classList.add('hidden'); });
+
+    if ('showDirectoryPicker' in window) {
+      connectBtn.addEventListener('click', connectModelsFolder);
+    } else {
+      connectBtn.disabled = true;
+      connectBtn.title = 'No disponible en este navegador';
+      document.getElementById('folderApiHint').textContent =
+        'Tu navegador no soporta conectar carpetas locales (disponible en Chrome, Edge y Opera). Los modelos incluidos en el sitio funcionan igual en cualquier navegador.';
+    }
+  }
+
+  // ---- Modelos incluidos en el sitio (fetch estático, funciona en cualquier navegador) ----
+  async function loadStaticModels() {
+    const container = document.getElementById('modelsStaticGrid');
+    const emptyEl = document.getElementById('modelsStaticEmpty');
+    container.innerHTML = '';
+    emptyEl.style.display = 'none';
+
+    let list;
+    try {
+      const res = await fetch(MODELS_MANIFEST_URL, { cache: 'no-store' });
+      if (!res.ok) throw new Error('manifest no encontrado');
+      list = await res.json();
+    } catch (err) {
+      emptyEl.textContent = 'No se encontró la carpeta /modelos o su manifest.json.';
+      emptyEl.style.display = 'block';
+      return;
+    }
+
+    if (!Array.isArray(list) || !list.length) {
+      emptyEl.textContent = 'La carpeta /modelos no tiene modelos listados en manifest.json.';
+      emptyEl.style.display = 'block';
+      return;
+    }
+
+    let loaded = 0;
+    for (const filename of list) {
+      try {
+        const svgRes = await fetch(MODELS_FOLDER_PATH + filename, { cache: 'no-store' });
+        if (!svgRes.ok) continue;
+        const svgText = sanitizeSvgText(await svgRes.text());
+        if (!svgText) continue;
+        renderModelItem(container, 'static:' + filename, filename.replace(/\.svg$/i, ''), svgText);
+        loaded++;
+      } catch (err) { console.warn('No se pudo cargar el modelo', filename, err); }
+    }
+    if (!loaded) { emptyEl.textContent = 'No se pudo cargar ningún modelo desde /modelos.'; emptyEl.style.display = 'block'; }
+  }
+
+  // ---- Carpeta local conectada (File System Access API: lectura + escritura real) ----
+  async function connectModelsFolder() {
+    if (!('showDirectoryPicker' in window)) { showToast('Tu navegador no soporta esta función'); return; }
+    try {
+      const handle = await window.showDirectoryPicker({ id: 'modelos', mode: 'readwrite' });
+      state.folderHandle = handle;
+      await idbSet('modelosDirHandle', handle);
+      await loadFolderModels(handle);
+      showToast('Carpeta de Modelos conectada');
+    } catch (err) {
+      if (err.name !== 'AbortError') { console.error(err); showToast('No se pudo conectar la carpeta'); }
+    }
+  }
+
+  async function loadFolderModels(dirHandle) {
+    const container = document.getElementById('modelsFolderGrid');
+    const emptyEl = document.getElementById('modelsFolderEmpty');
+    const statusEl = document.getElementById('modelsFolderStatus');
+    container.innerHTML = '';
+
+    let count = 0;
+    try {
+      for await (const [name, handle] of dirHandle.entries()) {
+        if (handle.kind !== 'file' || !/\.svg$/i.test(name)) continue;
+        try {
+          const file = await handle.getFile();
+          const svgText = sanitizeSvgText(await file.text());
+          if (!svgText) continue;
+          renderModelItem(container, 'folder:' + name, name.replace(/\.svg$/i, ''), svgText);
+          count++;
+        } catch (err) { console.warn('No se pudo leer', name, err); }
+      }
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = 'Se perdió el acceso a la carpeta conectada.';
+      return;
+    }
+
+    emptyEl.style.display = count ? 'none' : 'block';
+    statusEl.textContent = `Conectada: “${dirHandle.name}” — ${count} archivo(s) .svg`;
+
+    document.getElementById('folderStatusText').textContent = `Carpeta de Modelos: conectada (${dirHandle.name})`;
+    document.getElementById('saveToModelsRow').style.display = 'flex';
+  }
+
+  async function writeSvgToFolder(filename, svgText) {
+    try {
+      const fh = await state.folderHandle.getFileHandle(filename, { create: true });
+      const writable = await fh.createWritable();
+      await writable.write(svgText);
+      await writable.close();
+      showToast(`Guardado en /modelos: ${filename}`);
+    } catch (err) {
+      console.error(err);
+      showToast('No se pudo guardar el archivo en la carpeta de Modelos');
+    }
+  }
+
+  function renderModelItem(container, sourceKey, label, svgText) {
+    const item = document.createElement('div');
+    item.className = 'gallery-item model-item';
+    item.title = 'Añadir a la hoja A4';
+    item.innerHTML = `
+      <div class="gallery-thumb">${svgText}</div>
+      <div class="gallery-label">${escapeHtml(label)}</div>
+    `;
+    item.addEventListener('click', () => {
+      const id = registerOrGetAsset(sourceKey, label, svgText);
+      addAssetToCanvas(id, { center: true });
+      showToast(`“${label}” añadido a la hoja`);
+    });
+    container.appendChild(item);
+  }
+
+  function registerOrGetAsset(sourceKey, label, svgText) {
+    if (sourceToAssetId.has(sourceKey)) return sourceToAssetId.get(sourceKey);
+    const id = 'asset_' + (++state.assetCounter);
+    state.assets.set(id, { id, name: label, svgText });
+    sourceToAssetId.set(sourceKey, id);
+    renderGalleryItem(state.assets.get(id));
+    return id;
+  }
+
+  // ---- Persistencia del permiso de carpeta entre sesiones (IndexedDB) ----
+  const IDB_NAME = 'stickerlab-db';
+  const IDB_STORE = 'handles';
+
+  function idbOpen() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function idbSet(key, val) {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(val, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  async function idbGet(key) {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function tryRestoreFolderHandle() {
+    if (!('indexedDB' in window) || !('showDirectoryPicker' in window)) return;
+    try {
+      const handle = await idbGet('modelosDirHandle');
+      if (!handle) return;
+      const perm = await handle.queryPermission({ mode: 'readwrite' });
+      if (perm === 'granted') {
+        state.folderHandle = handle;
+        await loadFolderModels(handle);
+      } else {
+        showReconnectHint(handle);
+      }
+    } catch (err) { console.warn('No se pudo restaurar la carpeta de Modelos', err); }
+  }
+
+  function showReconnectHint(handle) {
+    document.getElementById('folderStatusText').textContent = 'Carpeta de Modelos: conexión anterior detectada';
+    const status = document.getElementById('modelsFolderStatus');
+    status.innerHTML = '';
+    const btn = document.createElement('button');
+    btn.className = 'btn-ghost btn-small';
+    btn.textContent = 'Reactivar carpeta conectada anteriormente';
+    btn.addEventListener('click', async () => {
+      try {
+        const perm = await handle.requestPermission({ mode: 'readwrite' });
+        if (perm === 'granted') { await loadFolderModels(handle); }
+        else showToast('Permiso denegado');
+      } catch (err) { console.error(err); showToast('No se pudo reactivar la carpeta'); }
+    });
+    status.appendChild(btn);
   }
 
   // =========================================================================
