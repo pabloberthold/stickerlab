@@ -49,6 +49,7 @@
     setupClearButton();
     updateMarginGuide();
     tryRestoreFolderHandle();
+    handleVectraHandoff();
   }
 
   // =========================================================================
@@ -778,6 +779,36 @@
       } catch (err) { console.error(err); showToast('No se pudo reactivar la carpeta'); }
     });
     status.appendChild(btn);
+  }
+
+  // =========================================================================
+  // RECEPCIÓN DE HANDOFF DESDE VECTRA (conversor imagen → SVG)
+  // =========================================================================
+  function handleVectraHandoff() {
+    let raw;
+    try { raw = sessionStorage.getItem('vectra:handoff'); } catch (err) { return; }
+    if (!raw) return;
+    try { sessionStorage.removeItem('vectra:handoff'); } catch (err) { /* noop */ }
+
+    let data;
+    try { data = JSON.parse(raw); } catch (err) { console.warn('Handoff de Vectra inválido', err); return; }
+    if (!data || !data.svgText) return;
+
+    const svgText = sanitizeSvgText(data.svgText);
+    if (!svgText) { showToast('El SVG recibido desde Vectra no es válido'); return; }
+
+    const label = (data.name || 'vectra').trim() || 'vectra';
+    const id = 'asset_' + (++state.assetCounter);
+    state.assets.set(id, { id, name: label, svgText });
+    renderGalleryItem(state.assets.get(id));
+    addAssetToCanvas(id, { center: true });
+    showToast(`SVG de Vectra importado: “${label}”`);
+
+    if (window.history && window.history.replaceState) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('from');
+      window.history.replaceState({}, '', url.toString());
+    }
   }
 
   // =========================================================================

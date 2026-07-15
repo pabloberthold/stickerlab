@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vectra — Raster a SVG · StickerLab</title>
+<meta name="description" content="Convierte imágenes JPG, PNG y GIF a SVG vectorial de alta fidelidad, 100% en tu navegador. Parte de StickerLab.">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="header-left">
+    <a href="../index.html" class="back-link">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M8.5 2.5 3 7l5.5 4.5M3.5 7h8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      StickerLab
+    </a>
+    <span class="crumb-sep">/</span>
+    <div class="brand">
+      <svg class="brand-mark" width="22" height="22" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path id="brand-path" d="M2 20 C 6 6, 10 24, 14 10 S 22 4, 26 14" stroke="var(--accent)" stroke-width="2" fill="none" stroke-linecap="round"/>
+      </svg>
+      <span>Vectra</span>
+    </div>
+  </div>
+  <span class="badge">100% local · sin servidor</span>
+</header>
+
+<main>
+
+  <section class="hero">
+    <p class="eyebrow">raster → vector, en tu navegador</p>
+    <h1>Traza cada borde<br>con precisión de nodo.</h1>
+    <p class="hero-sub">Subí una imagen JPG, PNG o GIF y Vectra la convierte en un SVG editable — curvas, esquinas y color, calculados píxel a píxel sin que nada salga de tu equipo. El resultado se puede enviar directo a la galería de StickerLab.</p>
+  </section>
+
+  <section class="workspace">
+
+    <!-- STEP 1: UPLOAD -->
+    <div class="panel" id="upload-panel">
+      <div class="panel-head">
+        <span class="step-tag">01</span>
+        <h2>Subí tu imagen</h2>
+      </div>
+
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Subir imagen">
+        <svg class="dz-trace" viewBox="0 0 400 220" preserveAspectRatio="none" aria-hidden="true">
+          <rect x="2" y="2" width="396" height="216" rx="14" />
+        </svg>
+        <div class="dz-content">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 16V4M12 4L7 9M12 4l5 5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <p class="dz-title">Arrastrá tu imagen acá</p>
+          <p class="dz-sub">Hacé clic para elegir un archivo · JPG, PNG, GIF</p>
+          <p class="dz-sub dz-sub-paste">o pegá una imagen copiada con <kbd>Ctrl</kbd>+<kbd>V</kbd> (<kbd>Cmd</kbd>+<kbd>V</kbd> en Mac)</p>
+        </div>
+        <input type="file" id="file-input" accept="image/jpeg,image/png,image/gif" hidden>
+      </div>
+
+      <div class="dz-alt-actions">
+        <button type="button" id="paste-btn" class="ghost-btn ghost-btn-small">
+          Pegar desde el portapapeles
+        </button>
+      </div>
+
+      <p id="error-msg" class="error-msg" hidden></p>
+    </div>
+
+    <!-- STEP 2: SETTINGS + PREVIEW (hidden until an image is loaded) -->
+    <div class="panel" id="convert-panel" hidden>
+
+      <div class="panel-head">
+        <span class="step-tag">02</span>
+        <h2>Ajustá la fidelidad del trazado</h2>
+      </div>
+
+      <div class="controls-grid">
+
+        <div class="control-block">
+          <label>Modo de color</label>
+          <div class="segmented" id="mode-toggle">
+            <button type="button" class="seg-btn active" data-mode="color">Color</button>
+            <button type="button" class="seg-btn" data-mode="bw">Blanco y negro</button>
+          </div>
+        </div>
+
+        <div class="control-block" id="colors-control">
+          <label for="numcolors-range">Colores en la paleta <span class="val" id="numcolors-val">16</span></label>
+          <input type="range" id="numcolors-range" min="2" max="64" step="1" value="16">
+        </div>
+
+        <div class="control-block" id="threshold-control" hidden>
+          <label for="threshold-range">Umbral de brillo <span class="val" id="threshold-val">128</span></label>
+          <input type="range" id="threshold-range" min="0" max="255" step="1" value="128">
+        </div>
+
+        <div class="control-block">
+          <label for="detail-range">Detalle de curvas (menor = más nodos) <span class="val" id="detail-val">0.4</span></label>
+          <input type="range" id="detail-range" min="0.05" max="2" step="0.05" value="0.4">
+        </div>
+
+        <div class="control-block">
+          <label for="blur-range">Suavizado previo <span class="val" id="blur-val">0</span></label>
+          <input type="range" id="blur-range" min="0" max="10" step="1" value="0">
+        </div>
+
+        <div class="control-block checkbox-block">
+          <label class="checkbox-label">
+            <input type="checkbox" id="rightangle-check">
+            <span>Reforzar ángulos rectos</span>
+          </label>
+        </div>
+
+      </div>
+
+      <button id="convert-btn" class="primary-btn">
+        <span class="btn-label">Convertir a SVG</span>
+      </button>
+
+      <div id="progress-wrap" class="progress-wrap" hidden>
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        <p class="progress-label" id="progress-label">Calculando trayectorias…</p>
+      </div>
+
+    </div>
+
+    <!-- STEP 3: RESULTS -->
+    <div class="panel" id="results-panel" hidden>
+      <div class="panel-head">
+        <span class="step-tag">03</span>
+        <h2>Comparar y usar</h2>
+      </div>
+
+      <div class="compare-grid">
+        <div class="preview-card">
+          <div class="preview-card-head">
+            <span>Original</span>
+            <span class="meta-mono" id="original-size">—</span>
+          </div>
+          <div class="preview-frame">
+            <img id="original-preview" alt="Vista previa de la imagen original">
+          </div>
+        </div>
+
+        <div class="preview-card">
+          <div class="preview-card-head">
+            <span>Vectorizado</span>
+            <span class="meta-mono" id="svg-size">—</span>
+          </div>
+          <div class="preview-frame" id="svg-preview"></div>
+        </div>
+      </div>
+
+      <div class="results-actions">
+        <button id="send-to-sticker-btn" class="primary-btn primary-btn-accent">
+          <span class="btn-label">Enviar a StickerLab</span>
+        </button>
+        <button id="download-btn" class="ghost-btn">Descargar SVG</button>
+        <button id="reset-btn" class="ghost-btn">Empezar de nuevo</button>
+      </div>
+      <p class="hint-text">“Enviar a StickerLab” te lleva de vuelta al maquetador con este SVG ya añadido a la galería, listo para poner en la hoja A4.</p>
+    </div>
+
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <p>Vectra procesa todo en tu navegador con ImageTracer.js — ningún archivo se sube a ningún servidor. Parte de <a href="../index.html">StickerLab</a>.</p>
+</footer>
+
+<!-- ImageTracer.js: librería de vectorización pura en JS, pensada para correr enteramente en el cliente -->
+<script src="https://cdn.jsdelivr.net/npm/imagetracerjs@1.2.6/imagetracer_v1.2.6.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
