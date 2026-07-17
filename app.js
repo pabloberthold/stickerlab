@@ -361,6 +361,7 @@
     document.getElementById('alignV').addEventListener('click', () => alignSelected('v'));
     document.getElementById('fillSheetBtn').addEventListener('click', fillSheet);
     document.getElementById('exportBtn').addEventListener('click', exportToPdf);
+    document.getElementById('printBtn').addEventListener('click', printSheet);
   }
 
   function cloneAsync(obj) {
@@ -785,17 +786,31 @@
   // RECEPCIÓN DE HANDOFF DESDE VECTRA (conversor imagen → SVG)
   // =========================================================================
   function handleVectraHandoff() {
-    let raw;
-    try { raw = sessionStorage.getItem('vectra:handoff'); } catch (err) { return; }
-    if (!raw) return;
+    const params = new URLSearchParams(window.location.search);
+    const cameFromVectra = params.get('from') === 'vectra';
+
+    let raw = null;
+    try { raw = sessionStorage.getItem('vectra:handoff'); } catch (err) { /* noop */ }
+
+    if (!raw) {
+      if (cameFromVectra) {
+        const msg = window.location.protocol === 'file:'
+          ? 'No se recibió el SVG de Vectra: al abrir los archivos con file:// el navegador no comparte datos entre páginas. Serví el sitio con un servidor local o subilo a GitHub Pages para que el envío funcione.'
+          : 'No se recibió ningún SVG desde Vectra. Probá exportarlo de nuevo o usá "Descargar SVG" e impórtalo manualmente.';
+        showToast(msg);
+        cleanupFromParam();
+      }
+      return;
+    }
+
     try { sessionStorage.removeItem('vectra:handoff'); } catch (err) { /* noop */ }
 
     let data;
-    try { data = JSON.parse(raw); } catch (err) { console.warn('Handoff de Vectra inválido', err); return; }
-    if (!data || !data.svgText) return;
+    try { data = JSON.parse(raw); } catch (err) { console.warn('Handoff de Vectra inválido', err); cleanupFromParam(); return; }
+    if (!data || !data.svgText) { cleanupFromParam(); return; }
 
     const svgText = sanitizeSvgText(data.svgText);
-    if (!svgText) { showToast('El SVG recibido desde Vectra no es válido'); return; }
+    if (!svgText) { showToast('El SVG recibido desde Vectra no es válido'); cleanupFromParam(); return; }
 
     const label = (data.name || 'vectra').trim() || 'vectra';
     const id = 'asset_' + (++state.assetCounter);
@@ -803,12 +818,67 @@
     renderGalleryItem(state.assets.get(id));
     addAssetToCanvas(id, { center: true });
     showToast(`SVG de Vectra importado: “${label}”`);
+    cleanupFromParam();
+  }
 
+  function cleanupFromParam() {
     if (window.history && window.history.replaceState) {
       const url = new URL(window.location.href);
       url.searchParams.delete('from');
       window.history.replaceState({}, '', url.toString());
     }
+  }
+
+  // =========================================================================
+  // IMPRESIÓN DIRECTA (diálogo nativo del sistema, sin pasar por descargar el PDF)
+  // =========================================================================
+  // Nota: por seguridad del navegador, ninguna página web puede omitir el
+  // diálogo de impresión del sistema operativo. Esto abre ese diálogo ya
+  // apuntando a la hoja A4 vectorial armada, para elegir ahí la impresora
+  // predeterminada e imprimir, sin necesidad de generar y abrir un PDF antes.
+  function printSheet() {
+    const exportables = canvas.getObjects().filter(o => !(o.data && o.data.isGuide));
+    if (!exportables.length) { showToast('No hay elementos para imprimir'); return; }
+
+    let innerMarkup = '';
+    let skipped = 0;
+    for (const obj of exportables) {
+      const built = buildExportSvg(obj);
+      if (!built) { skipped++; continue; }
+      innerMarkup += built.wrapperHtml.replace('<svg ', `<svg x="${built.x}" y="${built.y}" `);
+    }
+    if (!innerMarkup) { showToast('No se pudo preparar la hoja para imprimir'); return; }
+    if (skipped) console.warn(`${skipped} elemento(s) se omitieron al preparar la impresión`);
+
+    const printHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>StickerLab — Imprimir plancha A4</title>
+<style>
+  @page { size: 210mm 297mm; margin: 0; }
+  html, body { margin:0; padding:0; }
+  svg { display:block; }
+</style></head><body>
+<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 ${SHEET_W_MM} ${SHEET_H_MM}">${innerMarkup}</svg>
+</body></html>`;
+
+    const oldFrame = document.getElementById('printFrame');
+    if (oldFrame) oldFrame.remove();
+
+    const iframe = document.createElement('iframe');
+    iframe.id = 'printFrame';
+    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+    document.body.appendChild(iframe);
+
+    iframe.onload = () => {
+      try {
+        iframe.contentWindow.onafterprint = () => iframe.remove();
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      } catch (err) {
+        console.error(err);
+        showToast('No se pudo abrir el diálogo de impresión');
+        iframe.remove();
+      }
+    };
+    iframe.srcdoc = printHtml;
   }
 
   // =========================================================================
@@ -820,7 +890,8 @@
     el.textContent = msg;
     el.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+    const duration = Math.min(7000, Math.max(2600, msg.length * 55));
+    toastTimer = setTimeout(() => el.classList.remove('show'), duration);
   }
 
 })();

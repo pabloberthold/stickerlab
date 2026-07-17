@@ -243,10 +243,15 @@ kbd{
 }
 
 .error-msg{
-  margin: 16px 0 0;
+  margin: 0 0 18px;
   color: var(--error);
   font-family: var(--font-mono);
   font-size: 0.82rem;
+  line-height: 1.6;
+  background: #FDECEC;
+  border: 1px solid #F2C2C2;
+  border-radius: 10px;
+  padding: 12px 16px;
 }
 
 /* Controls */

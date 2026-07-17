@@ -407,16 +407,29 @@
   if (sendToStickerBtn) {
     sendToStickerBtn.addEventListener('click', () => {
       if (!state.svgString) return;
+
+      const payload = JSON.stringify({
+        name: state.originalName,
+        svgText: state.svgString,
+      });
+
       try {
-        sessionStorage.setItem('vectra:handoff', JSON.stringify({
-          name: state.originalName,
-          svgText: state.svgString,
-        }));
+        sessionStorage.setItem('vectra:handoff', payload);
+        // Verificación inmediata: algunos navegadores (o modos de privacidad) aceptan
+        // el setItem sin error pero no llegan a persistirlo.
+        if (sessionStorage.getItem('vectra:handoff') !== payload) {
+          throw new Error('No se pudo verificar el guardado en sessionStorage');
+        }
       } catch (err) {
         console.error(err);
-        showError('No se pudo preparar el envío a StickerLab. Descargá el SVG e importalo manualmente.');
+        if (window.location.protocol === 'file:') {
+          showError('No se pudo enviar el SVG a StickerLab: al abrir los archivos directamente (file://), el navegador no comparte datos entre páginas. Serví el sitio con un servidor local (por ej. "npx serve" o la extensión Live Server de VS Code) o subilo a GitHub Pages, y volvé a intentarlo. Mientras tanto podés usar "Descargar SVG" e importarlo manualmente en StickerLab.');
+        } else {
+          showError('No se pudo preparar el envío a StickerLab. Descargá el SVG e importalo manualmente.');
+        }
         return;
       }
+
       window.location.href = '../index.html?from=vectra';
     });
   }
