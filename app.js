@@ -836,6 +836,13 @@
   // diálogo de impresión del sistema operativo. Esto abre ese diálogo ya
   // apuntando a la hoja A4 vectorial armada, para elegir ahí la impresora
   // predeterminada e imprimir, sin necesidad de generar y abrir un PDF antes.
+  //
+  // Implementación: se vuelca la hoja como SVG dentro de un contenedor oculto
+  // (#printSheetContainer) y se usa @media print para mostrar solo esa hoja al
+  // imprimir. Se evita a propósito el patrón de iframe + srcdoc porque el
+  // evento "load" de un iframe no dispara de forma confiable en todos los
+  // navegadores (compite con la navegación inicial a about:blank), dejando el
+  // botón sin efecto visible.
   function printSheet() {
     const exportables = canvas.getObjects().filter(o => !(o.data && o.data.isGuide));
     if (!exportables.length) { showToast('No hay elementos para imprimir'); return; }
@@ -850,36 +857,18 @@
     if (!innerMarkup) { showToast('No se pudo preparar la hoja para imprimir'); return; }
     if (skipped) console.warn(`${skipped} elemento(s) se omitieron al preparar la impresión`);
 
-    const printHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>StickerLab — Imprimir plancha A4</title>
-<style>
-  @page { size: 210mm 297mm; margin: 0; }
-  html, body { margin:0; padding:0; }
-  svg { display:block; }
-</style></head><body>
-<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 ${SHEET_W_MM} ${SHEET_H_MM}">${innerMarkup}</svg>
-</body></html>`;
+    const container = document.getElementById('printSheetContainer');
+    container.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 ${SHEET_W_MM} ${SHEET_H_MM}">${innerMarkup}</svg>`;
 
-    const oldFrame = document.getElementById('printFrame');
-    if (oldFrame) oldFrame.remove();
-
-    const iframe = document.createElement('iframe');
-    iframe.id = 'printFrame';
-    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
-    document.body.appendChild(iframe);
-
-    iframe.onload = () => {
-      try {
-        iframe.contentWindow.onafterprint = () => iframe.remove();
-        iframe.contentWindow.focus();
-        iframe.contentWindow.print();
-      } catch (err) {
-        console.error(err);
-        showToast('No se pudo abrir el diálogo de impresión');
-        iframe.remove();
-      }
-    };
-    iframe.srcdoc = printHtml;
+    window.print();
   }
+
+  // Limpia la hoja oculta de impresión una vez cerrado el diálogo (buena práctica,
+  // no afecta el contenido real del lienzo).
+  window.addEventListener('afterprint', () => {
+    const container = document.getElementById('printSheetContainer');
+    if (container) container.innerHTML = '';
+  });
 
   // =========================================================================
   // TOAST
